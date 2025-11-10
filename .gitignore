@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────
+# Core project descriptors (keep .qsf/.qpf/.sdc!)
+# ─────────────────────────────────────────────
+!*.qpf
+!*.qsf
+!*.sdc
+!*.tcl
+!*.ip
+!*.qsys
+!*.sv
+!*.v
+!*.vh
+!*.svh
+!*.vhd
+!*.xdc
+!*.qip
+
+# ─────────────────────────────────────────────
+# Quartus build and temp directories
+# ─────────────────────────────────────────────
+db/
+incremental_db/
+output_files/
+simulation/
+timing/
+testbench/
+*_sim/
+*.rpt
+*.summary
+*.smsg
+*.eqn
+*.cmp
+*.jdi
+*.sof
+*.pof
+*.pmsf
+*.qar
+*.qarlog
+*.bak
+*.done
+*.hex
+*.mif
+*.pin
+*.html
+*.jpg
+*.png
+*.json
+*.csv
+*.log
+*.txt   # optional — keep only specific logs if needed
+
+# ─────────────────────────────────────────────
+# HLS / IP-catalog auto-generated content
+# (these can be rebuilt from .ip / .qsys descriptors)
+# ─────────────────────────────────────────────
+*/synth/
+*/simulation/
+*_generation_script*
+*_inst.v
+*_inst.vhd
+*_bb.v
+*_bb.vhd
+*_instantiation.txt
+*_example_design/
+*.qws
+
+# ─────────────────────────────────────────────
+# IDE / OS clutter
+# ─────────────────────────────────────────────
+*~
+*.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
