@@ -41,10 +41,10 @@
 module cust_afu_wrapper
 (
       // Clocks
-  input logic  axi4_mm_clk, 
+  input  logic  axi4_mm_clk, 
 
-    // Resets
-  input logic  axi4_mm_rst_n,
+      // Resets
+  input  logic  axi4_mm_rst_n,
   
   // [harry] AVMM interface - imported from ex_default_csr_top
   input  logic        csr_avmm_clk,
@@ -75,7 +75,7 @@ module cust_afu_wrapper
   output logic [1:0]                awlock, //must tie to 2'b00
   output logic [3:0]                awregion, //must tie to 4'b0000
   output logic [5:0]                awatop,
-  input                            awready,
+  input                             awready,
   
   /*
     AXI-MM interface - write data channel
@@ -85,7 +85,6 @@ module cust_afu_wrapper
   output logic                      wlast,
   output logic                      wuser,  //not sure
   output logic                      wvalid,
-//  output logic [7:0]                wid, //removed in v3.0.2
    input                            wready,
   
   /*
@@ -124,11 +123,7 @@ module cust_afu_wrapper
    input                            ruser,  //not sure
    input                            rvalid,
    output logic                     rready
-  
-
-   
 );
-
 
 // Tied to Zero for all inputs. USER Can Modify
 
@@ -160,37 +155,41 @@ module cust_afu_wrapper
   assign  awcache      = '0   ;
   assign  awlock       = '0   ;
   assign  awregion     = '0   ;
-  assign awatop         = '0  ; 
+  assign  awatop       = '0  ; 
 //  assign  wdata        = '1;    //v3.0.3
 //  assign  wstrb        = '1   ; //v1.1 
 //  assign  wlast        = '1   ; //v1.1
   assign  wuser        = '0   ; //set to not poison in v1.2
 //  assign  wvalid       = '1   ; //v1.1
-  assign  wid          = '0   ; //not sure
+//  assign  wid          = '0   ; //not sure (AXI3 only, removed in AXI4)
 //  assign  bready       = '0   ;//v1.1
 //  assign  arid         = '0   ;//v3.0
- //assign  araddr       = '0   ;
-  assign  arlen        = '0   ;
+ //assign  araddr       = '0   ; // Now driven by L2 mux
+//assign  arlen        = '0   ; // Now driven by L2 mux
   assign  arsize       = 3'b110   ;//must tie to 3'b110
-  assign  arburst      = '0   ;
+//assign  arburst      = '0   ; // Now driven by L2 mux
   assign  arprot       = '0   ;
   assign  arqos        = '0   ;
 //  assign  aruser       = '0   ; //v1.2
-  //assign  arvalid      = 1'b1   ; 
+  //assign  arvalid      = 1'b1   ; // Now driven by L2 mux
   assign  arcache      = '0   ;
   assign  arlock       = '0   ;
   assign  arregion     = '0   ;
-//  assign  rready       = 1'b1   ;//v3.0.5
+//  assign  rready       = 1'b1   ;//v3.0.5 // Now driven by L2 mux
 
-logic [63:0] func_type_out;   // function type selector
-logic [63:0] page_addr_0_out; // base address for page 0
-logic [63:0] delay_out; // store the delay result
+logic [63:0] func_type_out;      // function type selector
+logic [63:0] page_addr_0_cdc;    // base address for page 0 (CSR clk domain)
+logic [63:0] page_addr_0_out;    // base address for page 0 (AXI clk domain)
+logic [63:0] page_addr_1_cdc;    // query/address 1 (CSR clk domain)
+logic [63:0] page_addr_1_out;    // query/address 1 (AXI clk domain)
+logic [63:0] delay_mux;          // value fed into CSR delay register
+logic [63:0] resp_mux;           // value fed into CSR resp register
+logic [63:0] delay_cal;          // raw cal_delay result
+logic [63:0] resp_cal;           // raw cal_delay result_h
 logic [63:0] test_case; 
-logic [63:0] resp_out; //record the response of read/write
 logic [63:0] addr_cnt_out;
 logic [63:0] data_cnt_out;
 logic [63:0] resp_cnt_out;
-
 
 logic [63:0] id_cnt_out;
 logic [63:0] id_cnt_1_out;
@@ -202,145 +201,295 @@ logic [63:0] seed_init_out;
 logic [63:0] num_request_out;
 logic [63:0] addr_range_out;
 
-logic start_proc;
+logic        start_proc;
+logic        l2_start_cdc;   // L2 start signal from CSR domain
+logic        l2_start_axi;   // L2 start signal in AXI domain
 
-logic start_proc_cdc; //input to cdc
+// CSR-domain versions
+logic        start_proc_cdc; 
 logic [63:0] test_case_cdc;
 logic [63:0] seed_init_cdc;
 logic [63:0] num_request_cdc;
 logic [63:0] addr_range_cdc;
-//CSR block
+
+// helper for 1-bit FIFO CDC
+logic [62:0] ignore_start;
+logic [62:0] ignore_l2_start;
+
+// CSR block
 cust_afu_csr_avmm_slave cust_afu_csr_avmm_slave_inst(
-    .clk          (csr_avmm_clk),
-    .reset_n      (csr_avmm_rstn),
-    .writedata    (csr_avmm_writedata),
-    .read         (csr_avmm_read),
-    .write        (csr_avmm_write),
-    .byteenable   (csr_avmm_byteenable),
-    .readdata     (csr_avmm_readdata),
-    .readdatavalid(csr_avmm_readdatavalid),
-    .address      (csr_avmm_address),
-    .poison       (csr_avmm_poison),
-    .waitrequest  (csr_avmm_waitrequest),
+    .clk           (csr_avmm_clk),
+    .reset_n       (csr_avmm_rstn),
+    .writedata     (csr_avmm_writedata),
+    .read          (csr_avmm_read),
+    .write         (csr_avmm_write),
+    .byteenable    (csr_avmm_byteenable),
+    .readdata      (csr_avmm_readdata),
+    .readdatavalid (csr_avmm_readdatavalid),
+    .address       (csr_avmm_address),
+    .poison        (csr_avmm_poison),
+    .waitrequest   (csr_avmm_waitrequest),
 
-    .o_start_proc  (start_proc_cdc),
-    .func_type_out (func_type_out),   //not used in this module
-    .page_addr_0_out(page_addr_0_out),
-    .delay_out(delay_out),
-    .resp_out(resp_out),
-    .test_case_out(test_case_cdc),//see above for definition
-    .addr_cnt_out(addr_cnt_out),
-    .data_cnt_out(data_cnt_out),
-    .resp_cnt_out(resp_cnt_out),
-    .id_cnt_out(id_cnt_out),
-    .id_cnt_1_out(id_cnt_1_out),
-    .seed_init_out(seed_init_cdc),
+    .o_start_proc   (start_proc_cdc),
+    .o_l2_dist_start(l2_start_cdc),     // L2 start trigger
+    .func_type_out  (func_type_out),    // not used in this module
+    .page_addr_0_out(page_addr_0_cdc),  // CSR clock domain
+  .page_addr_1_out(page_addr_1_cdc),  // CSR clock domain
+  .delay_out      (delay_mux),
+  .resp_out       (resp_mux),
+    .test_case_out  (test_case_cdc),    // see psedu_read_write for definition
+    .addr_cnt_out   (addr_cnt_out),
+    .data_cnt_out   (data_cnt_out),
+    .resp_cnt_out   (resp_cnt_out),
+    .id_cnt_out     (id_cnt_out),
+    .id_cnt_1_out   (id_cnt_1_out),
+    .seed_init_out  (seed_init_cdc),
     .num_request_out(num_request_cdc),
-    .addr_range_out(addr_range_cdc)
+    .addr_range_out (addr_range_cdc)
 );
 
-cdc_sync_flop #(.RESET_LEVEL(0), .WIDTH(64)) test_case_cdc_inst (
-  .clk(axi4_mm_clk),
-  .reset(axi4_mm_rst_n),
-  .i_data(test_case_cdc),
-  .o_data(test_case)
+// ============================================================================
+// Clock domain crossing: CSR (csr_avmm_clk) -> AXI (axi4_mm_clk)
+// Replaces previous cdc_sync_flop instances with dual-clock FIFO IP
+// ============================================================================
+
+// page_addr_0 (64-bit)
+fifo page_addr_0_cdc_inst (
+  .data    (page_addr_0_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (page_addr_0_out),
+  .rdempty (),
+  .wrfull  ()
 );
 
-
-cdc_sync_flop #(.RESET_LEVEL(0), .WIDTH(1)) start_proc_cdc_inst (
-  .clk(axi4_mm_clk),
-  .reset(axi4_mm_rst_n),
-  .i_data(start_proc_cdc),
-  .o_data(start_proc)
+// page_addr_1 (64-bit)
+fifo page_addr_1_cdc_inst (
+  .data    (page_addr_1_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (page_addr_1_out),
+  .rdempty (),
+  .wrfull  ()
 );
 
-cdc_sync_flop #(.RESET_LEVEL(0), .WIDTH(64)) seed_cdc_inst (
-  .clk(axi4_mm_clk),
-  .reset(axi4_mm_rst_n),
-  .i_data(seed_init_cdc),
-  .o_data(seed_init_out)
+// test_case (64-bit)
+fifo test_case_cdc_inst (
+  .data    (test_case_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (test_case),
+  .rdempty (),
+  .wrfull  ()
 );
 
-cdc_sync_flop #(.RESET_LEVEL(0), .WIDTH(64)) num_request_cdc_inst (
-  .clk(axi4_mm_clk),
-  .reset(axi4_mm_rst_n),
-  .i_data(num_request_cdc),
-  .o_data(num_request_out)
+// start_proc (1-bit -> 64-bit FIFO)
+fifo start_proc_cdc_inst (
+  .data    ({63'b0, start_proc_cdc}),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       ({ignore_start, start_proc}),
+  .rdempty (),
+  .wrfull  ()
 );
 
-cdc_sync_flop #(.RESET_LEVEL(0), .WIDTH(64)) addr_range_cdc_inst (
-  .clk(axi4_mm_clk),
-  .reset(axi4_mm_rst_n),
-  .i_data(addr_range_cdc),
-  .o_data(addr_range_out)
+// seed_init (64-bit)
+fifo seed_cdc_inst (
+  .data    (seed_init_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (seed_init_out),
+  .rdempty (),
+  .wrfull  ()
 );
+
+// num_request (64-bit)
+fifo num_request_cdc_inst (
+  .data    (num_request_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (num_request_out),
+  .rdempty (),
+  .wrfull  ()
+);
+
+// addr_range (64-bit)
+fifo addr_range_cdc_inst (
+  .data    (addr_range_cdc),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       (addr_range_out),
+  .rdempty (),
+  .wrfull  ()
+);
+
+// l2_start (1-bit -> 64-bit FIFO)
+fifo l2_start_cdc_inst (
+  .data    ({63'b0, l2_start_cdc}),
+  .wrreq   (1'b1),
+  .rdreq   (1'b1),
+  .wrclk   (csr_avmm_clk),
+  .rdclk   (axi4_mm_clk),
+  .q       ({ignore_l2_start, l2_start_axi}),
+  .rdempty (),
+  .wrfull  ()
+);
+
+// ============================================================================
 
 always_ff @(posedge axi4_mm_clk) begin
-  pre_test_case <= test_case;
-  pre_test_case1 <= pre_test_case;
+  if (!axi4_mm_rst_n) begin
+    pre_test_case  <= 64'd0;
+    pre_test_case1 <= 64'd0;
+  end else begin
+    pre_test_case  <= test_case;
+    pre_test_case1 <= pre_test_case;
+  end
 end
 
-psedu_read_write psedu_read_write_inst(
-    .axi4_mm_clk(axi4_mm_clk),
-    .axi4_mm_rst_n(axi4_mm_rst_n),
-    .test_case(test_case),
-    .pre_test_case(pre_test_case1),
-    .num_request(num_request_out),
-    .addr_range(addr_range_out),
-    .start_proc(start_proc),
-    .rvalid(rvalid),
-    .rlast(rlast),
-    .rresp(rresp),
-    .arready(arready),
-    .wready(wready),
-    .awready(awready),
-    .bvalid(bvalid),
-    .bresp(bresp),
-    .page_addr_0(page_addr_0_out),
-    .seed_init(seed_init_out),
-    .arvalid(arvalid),
-    .arid(arid),
-    .aruser(aruser),
-    .rready(rready),
-    .awvalid(awvalid),
-    .awid(awid),
-    .awuser(awuser),
-    .wvalid(wvalid),
-    .wdata(wdata),
-    .wlast(wlast),
-    .wstrb(wstrb),
-    .bready(bready),
-    .araddr(araddr),
-    .awaddr(awaddr)
+// ------------------------------------------------------------
+// L2 Distance Engine instance (read-only, streaming)
+// Activated when test_case == 64'd100
+// ------------------------------------------------------------
+logic [63:0] l2_araddr;
+logic [7:0]  l2_arlen;
+logic [2:0]  l2_arsize;
+logic [1:0]  l2_arburst;
+logic        l2_arvalid;
+logic        l2_rready;
+logic [63:0] l2_cycles;
+logic [63:0] l2_done;
+wire         l2_use = (test_case == 64'd100);
+
+l2_distance_engine #(
+  .BUS_W      (512),
+  .ELEM_BITS  (32),
+  .DIM_MAX    (128)
+) u_l2 (
+  .clk        (axi4_mm_clk),
+  .rst_n      (axi4_mm_rst_n),
+  .test_case  (test_case),
+  .start_i    (l2_start_axi),
+  .base_pa    (page_addr_0_out),
+  .query_pa   (page_addr_1_out),
+  .num_vecs   (num_request_out),
+  .dim_cfg    (addr_range_out),
+  .araddr_o   (l2_araddr),
+  .arlen_o    (l2_arlen),
+  .arsize_o   (l2_arsize),
+  .arburst_o  (l2_arburst),
+  .arvalid_o  (l2_arvalid),
+  .arready_i  (arready),
+  .rdata_i    (rdata),
+  .rvalid_i   (rvalid),
+  .rlast_i    (rlast),
+  .rready_o   (l2_rready),
+  .cycles_o   (l2_cycles),
+  .done_o     (l2_done)
 );
 
+// AXI read channel multiplexing (only read path used by engine)
+assign araddr  = l2_use ? l2_araddr  : 64'd0;
+assign arvalid = l2_use ? l2_arvalid : 1'b0;
+assign arburst = l2_use ? l2_arburst : 2'b00;
+assign arsize  = 3'b110; // fixed 64B beats
+assign arlen   = l2_use ? {2'b00, l2_arlen} : 10'd0; // widen 8-bit -> 10-bit
+assign rready  = l2_use ? l2_rready  : 1'b1; // default ready when not using engine
+
+// Mux results destined for CSR space
+// When test_case selects L2 engine (100), present cycles and done flag;
+// otherwise forward cal_delay measurement infrastructure values.
+assign delay_mux = l2_use ? l2_cycles : delay_cal;
+assign resp_mux  = l2_use ? {63'd0, l2_done[0]} : resp_cal;
+
+
+// psedu_read_write psedu_read_write_inst(
+//     .axi4_mm_clk   (axi4_mm_clk),
+//     .axi4_mm_rst_n (axi4_mm_rst_n),
+
+//     .test_case     (test_case),
+//     .pre_test_case (pre_test_case1),
+//     .num_request   (num_request_out),
+//     .addr_range    (addr_range_out),
+//     .start_proc    (start_proc),
+
+//     .rvalid        (rvalid),
+//     .rlast         (rlast),
+//     .rresp         (rresp),
+//     .arready       (arready),
+//     .wready        (wready),
+//     .awready       (awready),
+//     .bvalid        (bvalid),
+//     .bresp         (bresp),
+
+//     .page_addr_0   (page_addr_0_out),
+//     .seed_init     (seed_init_out),
+
+//     .arvalid       (arvalid),
+//     .arid          (arid),
+//     .aruser        (aruser),
+//     .rready        (rready),
+
+//     .awvalid       (awvalid),
+//     .awid          (awid),
+//     .awuser        (awuser),
+
+//     .wvalid        (wvalid),
+//     .wdata         (wdata),
+//     .wlast         (wlast),
+//     .wstrb         (wstrb),
+
+//     .bready        (bready),
+
+//     .araddr        (araddr),
+//     .awaddr        (awaddr)
+// );
+
 cal_delay cal_delay_inst(
-  .clk(axi4_mm_clk),
-  .reset_n(axi4_mm_rst_n),
-  .m_axi_arvalid(arvalid), 
-  .m_axi_arready(arready),
-  .m_axi_rvalid(rvalid),
-  .m_axi_rready(rready),
-  .m_axi_awvalid(awvalid),
-  .m_axi_awready(awready),
-  .m_axi_wready(wready),
-  .m_axi_wvalid(wvalid),
-  .m_axi_bvalid(bvalid),
-  .m_axi_bready(bready),
-  .test_case(test_case),
-  .pre_test_case(pre_test_case1),
-  .num_request(num_request_out),
-  .rid(rid),
-  .bid(bid),
-  .arid(arid),
-  .awid(awid),
-  .result(delay_out),
-  .result_h(resp_out),
-  .addr_cnt(addr_cnt_out),
-  .data_cnt(data_cnt_out),
-  .resp_cnt(resp_cnt_out),
-  .id_cnt(id_cnt_out),
-  .id_cnt_1(id_cnt_1_out)
+  .clk           (axi4_mm_clk),
+  .reset_n       (axi4_mm_rst_n),
+
+  .m_axi_arvalid (arvalid), 
+  .m_axi_arready (arready),
+  .m_axi_rvalid  (rvalid),
+  .m_axi_rready  (rready),
+  .m_axi_awvalid (awvalid),
+  .m_axi_awready (awready),
+  .m_axi_wready  (wready),
+  .m_axi_wvalid  (wvalid),
+  .m_axi_bvalid  (bvalid),
+  .m_axi_bready  (bready),
+
+  .test_case     (test_case),
+  .pre_test_case (pre_test_case1),
+  .num_request   (num_request_out),
+
+  .rid           (rid),
+  .bid           (bid),
+  .arid          (arid),
+  .awid          (awid),
+
+  .result        (delay_cal),
+  .result_h      (resp_cal),
+  .addr_cnt      (addr_cnt_out),
+  .data_cnt      (data_cnt_out),
+  .resp_cnt      (resp_cnt_out),
+  .id_cnt        (id_cnt_out),
+  .id_cnt_1      (id_cnt_1_out)
 );
 
 endmodule

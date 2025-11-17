@@ -45,6 +45,7 @@ module cust_afu_csr_avmm_slave(
    output logic o_start_proc,
    output logic [63:0] func_type_out,
    output logic [63:0] page_addr_0_out,
+   output logic [63:0] page_addr_1_out,
    output logic [63:0] test_case_out,
    input logic [63:0] delay_out,
    input logic [63:0] resp_out,
@@ -55,7 +56,8 @@ module cust_afu_csr_avmm_slave(
    input logic [63:0] id_cnt_1_out,
    output logic [63:0] seed_init_out,
    output logic [63:0] num_request_out,
-   output logic [63:0] addr_range_out
+   output logic [63:0] addr_range_out,
+   output logic o_l2_dist_start
 );
 
  // [harry] original version use 32-bit register, we only need to use 64-bit register
@@ -65,17 +67,19 @@ module cust_afu_csr_avmm_slave(
 
 logic [63:0] func_type_reg;     //0
 logic [63:0] page_addr0_reg;    //8
-logic [63:0] delay_reg;         //16
-logic [63:0] test_case_reg;     //24
-logic [63:0] resp_reg;          //32
-logic [63:0] addr_cnt_reg;      //40
-logic [63:0] data_cnt_reg;      //48
-logic [63:0] resp_cnt_reg;      //56
-logic [63:0] id_cnt_reg;        //64
-logic [63:0] id_cnt_1_reg;      //72
-logic [63:0] seed_reg;          //80
-logic [63:0] num_request_reg;   //88
-logic [63:0] addr_range_reg;    //96
+logic [63:0] page_addr1_reg;    //16
+logic [63:0] delay_reg;         //24 (latched on done)
+logic [63:0] test_case_reg;     //32
+logic [63:0] resp_reg;          //40 (latched on done)
+logic [63:0] addr_cnt_reg;      //48
+logic [63:0] data_cnt_reg;      //56
+logic [63:0] resp_cnt_reg;      //64
+logic [63:0] id_cnt_reg;        //72
+logic [63:0] id_cnt_1_reg;      //80
+logic [63:0] seed_reg;          //88
+logic [63:0] num_request_reg;   //96
+logic [63:0] addr_range_reg;    //104
+logic        l2_dist_start_reg; //112
 
 logic [63:0] mask ;
 logic config_access;
@@ -100,123 +104,117 @@ logic config_access;
 
 //Terminating extented capability header
 //  localparam EX_CAP_HEADER  = 32'h00000000;
-   localparam EX_CAP_HEADER  = 64'h00000000;
+   localparam EX_CAP_NEXTPTR = 32'h00000000;
 
-always @(posedge clk) begin
-    func_type_out <= func_type_reg;
-    page_addr_0_out <= page_addr0_reg;
-    test_case_out <= test_case_reg;
-    delay_reg <= delay_out;
-    resp_reg <= resp_out;
-    addr_cnt_reg <= addr_cnt_out;
-    data_cnt_reg <= data_cnt_out;
-    resp_cnt_reg <= resp_cnt_out;
-    id_cnt_reg <= id_cnt_out;
-    id_cnt_1_reg <= id_cnt_1_out;
-    seed_init_out <= seed_reg;
-    num_request_out <= num_request_reg;
-    addr_range_out <= addr_range_reg;
+// CSR Address Map
+localparam FUNC_TYPE_ADDR     = 22'h0000;
+localparam PAGE_ADDR_0_ADDR   = 22'h0008;
+localparam PAGE_ADDR_1_ADDR   = 22'h0010;
+localparam DELAY_ADDR         = 22'h0018;
+localparam TEST_CASE_ADDR     = 22'h0020;
+localparam RESP_ADDR          = 22'h0028;
+localparam ADDR_CNT_ADDR      = 22'h0030;
+localparam DATA_CNT_ADDR      = 22'h0038;
+localparam RESP_CNT_ADDR      = 22'h0040;
+localparam ID_CNT_ADDR        = 22'h0048;
+localparam ID_CNT_1_ADDR      = 22'h0050;
+localparam SEED_ADDR          = 22'h0058;
+localparam NUM_REQUEST_ADDR   = 22'h0060;
+localparam ADDR_RANGE_ADDR    = 22'h0068;
+localparam L2_DIST_START_ADDR = 22'h0070;
+
+
+// CSR Register Read Logic
+always_ff @(posedge clk or negedge reset_n)
+begin
+   if(!reset_n)
+      readdata <= 64'h0;
+   else if (read)
+      case(address)
+         FUNC_TYPE_ADDR: readdata <= func_type_reg;
+         PAGE_ADDR_0_ADDR: readdata <= page_addr0_reg;
+         PAGE_ADDR_1_ADDR: readdata <= page_addr1_reg;
+         DELAY_ADDR: readdata <= delay_reg;
+         TEST_CASE_ADDR: readdata <= test_case_reg;
+         RESP_ADDR: readdata <= resp_reg;
+         ADDR_CNT_ADDR: readdata <= addr_cnt_reg;
+         DATA_CNT_ADDR: readdata <= data_cnt_reg;
+         RESP_CNT_ADDR: readdata <= resp_cnt_reg;
+         ID_CNT_ADDR: readdata <= id_cnt_reg;
+         ID_CNT_1_ADDR: readdata <= id_cnt_1_reg;
+         SEED_ADDR: readdata <= seed_reg;
+         NUM_REQUEST_ADDR: readdata <= num_request_reg;
+         ADDR_RANGE_ADDR: readdata <= addr_range_reg;
+         L2_DIST_START_ADDR: readdata <= l2_dist_start_reg;
+         default: readdata <= 64'h0;
+      endcase
 end
 
 
 //Write logic
-always @(posedge clk) begin
-    if (!reset_n) begin
-        func_type_reg <= 64'b0;
-        page_addr0_reg <= 64'b0;
-        o_start_proc <= 1'b0;
-        test_case_reg <= 64'b0;
-        num_request_reg <= 64'b0;
-        addr_range_reg <= 64'b0;
-    end
-    else begin
-        if (write && (address == 22'h0000)) begin 
-           func_type_reg <= (writedata & mask) ;
-           o_start_proc <= 1'b0;
-        end
-        else if (write && (address == 22'h0008)) begin //change address
-            page_addr0_reg <= (writedata & mask);
-            o_start_proc <= 1'b1;
-        end
-        else if (write && (address == 22'h0018)) begin //change test case
-            test_case_reg <= (writedata & mask);
-            o_start_proc <= 1'b0;
-        end
-        else if (write && (address == 22'h0050)) begin //change seed
-            seed_reg <= (writedata & mask);
-            o_start_proc <= 1'b0;
-        end
-        else if (write && (address == 22'h0058)) begin //change num_request
-            num_request_reg <= (writedata & mask);
-            o_start_proc <= 1'b0;
-        end
-        else if (write && (address == 22'h0060)) begin //change addr_range
-            addr_range_reg <= (writedata & mask);
-            o_start_proc <= 1'b0;
-        end 
-        else begin
-            func_type_reg <= func_type_reg;
-            page_addr0_reg <= page_addr0_reg;
-            test_case_reg <= test_case_reg;
-            seed_reg <= seed_reg;
-            num_request_reg <= num_request_reg;
-            addr_range_reg <= addr_range_reg;
-            o_start_proc <= 1'b0;
-        end        
-    end    
-end 
+always_ff @(posedge clk or negedge reset_n)
+begin
+   if(!reset_n)
+   begin
+      func_type_reg <= 64'h0;
+      page_addr0_reg <= 64'h0;
+      page_addr1_reg <= 64'h0;
+      test_case_reg <= 64'h0;
+      seed_reg <= 64'h0;
+      num_request_reg <= 64'h0;
+      addr_range_reg <= 64'h0;
+      l2_dist_start_reg <= 1'b0;
+   end
+   else
+   begin
+      if(write)
+      begin
+         case(address)
+            FUNC_TYPE_ADDR: func_type_reg <= (writedata & mask) | (func_type_reg & ~mask);
+            PAGE_ADDR_0_ADDR: page_addr0_reg <= (writedata & mask) | (page_addr0_reg & ~mask);
+            PAGE_ADDR_1_ADDR: page_addr1_reg <= (writedata & mask) | (page_addr1_reg & ~mask);
+            TEST_CASE_ADDR: test_case_reg <= (writedata & mask) | (test_case_reg & ~mask);
+            SEED_ADDR: seed_reg <= (writedata & mask) | (seed_reg & ~mask);
+            NUM_REQUEST_ADDR: num_request_reg <= (writedata & mask) | (num_request_reg & ~mask);
+            ADDR_RANGE_ADDR: addr_range_reg <= (writedata & mask) | (addr_range_reg & ~mask);
+            L2_DIST_START_ADDR: l2_dist_start_reg <= (writedata[0] & mask[0]) | (l2_dist_start_reg & ~mask[0]);
+            default: ;
+         endcase
+      end
+      else if (address == L2_DIST_START_ADDR && l2_dist_start_reg)
+      begin
+         // Self-clearing logic for the start bit
+         l2_dist_start_reg <= 1'b0;
+      end
+   end
+end
 
-//Read logic
-always @(posedge clk) begin
-    if (!reset_n) begin
-        readdata  <= 32'h0;
-    end
-    else begin
-        if (read && (address[21:0] == 22'h0)) begin 
-           readdata <= func_type_reg & mask;
-        end
-        else if(read && (address[21:0] == 22'h0008)) begin //read addr
-           readdata <= page_addr0_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0010)) begin //read delay0
-            readdata <=  delay_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0018)) begin //read test case
-            readdata <=  test_case_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0020)) begin //read resp
-            readdata <=  resp_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0028)) begin //read addr_cnt
-            readdata <=  addr_cnt_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0030)) begin //read data_cnt
-            readdata <=  data_cnt_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0038)) begin //read resp_cnt
-            readdata <=  resp_cnt_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0040)) begin //read id_cnt
-            readdata <=  id_cnt_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0048)) begin //read id_cnt_1
-            readdata <=  id_cnt_1_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0050)) begin //read seed_reg
-            readdata <=  seed_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0058)) begin //read num_request_reg
-            readdata <=  num_request_reg & mask;
-        end
-        else if (read && (address[21:0] == 22'h0060)) begin //read addr_range_reg
-            readdata <=  addr_range_reg & mask;
-        end
-        else begin
-           readdata  <= 64'h0;
-        end        
-    end    
-end 
+assign o_start_proc = (func_type_reg != 0);
+assign func_type_out = func_type_reg;
+assign page_addr_0_out = page_addr0_reg;
+assign page_addr_1_out = page_addr1_reg;
+assign test_case_out = test_case_reg;
+assign seed_init_out = seed_reg;
+assign num_request_out = num_request_reg;
+assign addr_range_out = addr_range_reg;
+assign o_l2_dist_start = l2_dist_start_reg;
 
+// Latch results on done posedge to preserve after test_case change
+logic resp_out_prev;
+always_ff @(posedge clk or negedge reset_n) begin
+  if(!reset_n) begin
+    delay_reg <= 64'h0;
+    resp_reg  <= 64'h0;
+    resp_out_prev <= 1'b0;
+  end else begin
+    resp_out_prev <= resp_out[0];
+    // Capture on done rising edge
+    if(resp_out[0] && !resp_out_prev) begin
+      delay_reg <= delay_out;
+      resp_reg  <= resp_out;
+    end
+  end
+end
 
 //Control Logic
 enum int unsigned { IDLE = 0,WRITE = 2, READ = 4 } state, next_state;
