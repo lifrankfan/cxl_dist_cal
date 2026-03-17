@@ -166,7 +166,7 @@ module cust_afu_wrapper
 //  assign  arid         = '0   ;//v3.0
  //assign  araddr       = '0   ; // Now driven by L2 mux
 //assign  arlen        = '0   ; // Now driven by L2 mux
-  assign  arsize       = 3'b110   ;//must tie to 3'b110
+//  assign  arsize       = 3'b110   ;//must tie to 3'b110
 //assign  arburst      = '0   ; // Now driven by L2 mux
   assign  arprot       = '0   ;
   assign  arqos        = '0   ;
@@ -182,9 +182,9 @@ logic [63:0] page_addr_0_cdc;    // base address for page 0 (CSR clk domain)
 logic [63:0] page_addr_0_out;    // base address for page 0 (AXI clk domain)
 logic [63:0] page_addr_1_cdc;    // query/address 1 (CSR clk domain)
 logic [63:0] page_addr_1_out;    // query/address 1 (AXI clk domain)
-logic [63:0] delay_mux;          // value fed into CSR delay register
+logic [63:0] cycles_mux;          // value fed into CSR delay register
 logic [63:0] resp_mux;           // value fed into CSR resp register
-logic [63:0] delay_cal;          // raw cal_delay result
+logic [63:0] cycles_cal;          // raw cal_delay result
 logic [63:0] resp_cal;           // raw cal_delay result_h
 logic [63:0] test_case; 
 logic [63:0] addr_cnt_out;
@@ -235,7 +235,7 @@ cust_afu_csr_avmm_slave cust_afu_csr_avmm_slave_inst(
     .func_type_out  (func_type_out),    // not used in this module
     .page_addr_0_out(page_addr_0_cdc),  // CSR clock domain
   .page_addr_1_out(page_addr_1_cdc),  // CSR clock domain
-  .delay_out      (delay_mux),
+  .cycles_out      (cycles_mux),
   .resp_out       (resp_mux),
     .test_case_out  (test_case_cdc),    // see psedu_read_write for definition
     .addr_cnt_out   (addr_cnt_out),
@@ -362,6 +362,66 @@ always_ff @(posedge axi4_mm_clk) begin
 end
 
 // ------------------------------------------------------------
+// Pseudo Read/Write Module (legacy traffic generator, test_case < 100)
+// ------------------------------------------------------------
+logic        prw_arvalid;
+logic [11:0] prw_arid;
+logic [5:0]  prw_aruser;
+logic [63:0] prw_araddr;
+logic        prw_rready;
+logic        prw_awvalid;
+logic [11:0] prw_awid;
+logic [5:0]  prw_awuser;
+logic [63:0] prw_awaddr;
+logic        prw_wvalid;
+logic [511:0] prw_wdata;
+logic        prw_wlast;
+logic [63:0] prw_wstrb;
+logic        prw_bready;
+
+psedu_read_write psedu_read_write_inst(
+    .axi4_mm_clk   (axi4_mm_clk),
+    .axi4_mm_rst_n (axi4_mm_rst_n),
+
+    .test_case     (test_case),
+    .pre_test_case (pre_test_case1),
+    .num_request   (num_request_out),
+    .addr_range    (addr_range_out),
+    .start_proc    (start_proc),
+
+    .rvalid        (rvalid),
+    .rlast         (rlast),
+    .rresp         (rresp),
+    .arready       (arready),
+    .wready        (wready),
+    .awready       (awready),
+    .bvalid        (bvalid),
+    .bresp         (bresp),
+
+    .page_addr_0   (page_addr_0_out),
+    .seed_init     (seed_init_out),
+
+    .arvalid       (prw_arvalid),
+    .arid          (prw_arid),
+    .aruser        (prw_aruser),
+    .rready        (prw_rready),
+
+    .awvalid       (prw_awvalid),
+    .awid          (prw_awid),
+    .awuser        (prw_awuser),
+
+    .wvalid        (prw_wvalid),
+    .wdata         (prw_wdata),
+    .wlast         (prw_wlast),
+    .wstrb         (prw_wstrb),
+
+    .bready        (prw_bready),
+
+    .araddr        (prw_araddr),
+    .awaddr        (prw_awaddr)
+);
+
+// ------------------------------------------------------------
 // L2 Distance Engine instance (read-only, streaming)
 // Activated when test_case == 64'd100
 // ------------------------------------------------------------
@@ -373,6 +433,7 @@ logic        l2_arvalid;
 logic        l2_rready;
 logic [63:0] l2_cycles;
 logic [63:0] l2_done;
+logic [63:0] l2_result;
 wire         l2_use = (test_case == 64'd100);
 
 l2_distance_engine #(
@@ -399,65 +460,38 @@ l2_distance_engine #(
   .rlast_i    (rlast),
   .rready_o   (l2_rready),
   .cycles_o   (l2_cycles),
-  .done_o     (l2_done)
+  .done_o     (l2_done),
+  .last_result_o (l2_result)
 );
 
-// AXI read channel multiplexing (only read path used by engine)
-assign araddr  = l2_use ? l2_araddr  : 64'd0;
-assign arvalid = l2_use ? l2_arvalid : 1'b0;
+// AXI channel multiplexing between L2 engine and pseudo read/write
+// L2 engine: test_case == 100 (read-only)
+// Pseudo R/W: test_case < 100 (read/write traffic generator)
+assign araddr  = l2_use ? l2_araddr  : prw_araddr;
+assign arvalid = l2_use ? l2_arvalid : prw_arvalid;
 assign arburst = l2_use ? l2_arburst : 2'b00;
 assign arsize  = 3'b110; // fixed 64B beats
 assign arlen   = l2_use ? {2'b00, l2_arlen} : 10'd0; // widen 8-bit -> 10-bit
-assign rready  = l2_use ? l2_rready  : 1'b1; // default ready when not using engine
+assign arid    = l2_use ? 12'd0 : prw_arid;
+assign aruser  = l2_use ? 6'd0  : prw_aruser;
+assign rready  = l2_use ? l2_rready : prw_rready;
+
+// Write channels (only used by pseudo R/W, L2 engine is read-only)
+assign awaddr  = prw_awaddr;
+assign awvalid = prw_awvalid;
+assign awid    = prw_awid;
+assign awuser  = prw_awuser;
+assign wvalid  = prw_wvalid;
+assign wdata   = prw_wdata;
+assign wlast   = prw_wlast;
+assign wstrb   = prw_wstrb;
+assign bready  = prw_bready;
 
 // Mux results destined for CSR space
 // When test_case selects L2 engine (100), present cycles and done flag;
 // otherwise forward cal_delay measurement infrastructure values.
-assign delay_mux = l2_use ? l2_cycles : delay_cal;
-assign resp_mux  = l2_use ? {63'd0, l2_done[0]} : resp_cal;
-
-
-// psedu_read_write psedu_read_write_inst(
-//     .axi4_mm_clk   (axi4_mm_clk),
-//     .axi4_mm_rst_n (axi4_mm_rst_n),
-
-//     .test_case     (test_case),
-//     .pre_test_case (pre_test_case1),
-//     .num_request   (num_request_out),
-//     .addr_range    (addr_range_out),
-//     .start_proc    (start_proc),
-
-//     .rvalid        (rvalid),
-//     .rlast         (rlast),
-//     .rresp         (rresp),
-//     .arready       (arready),
-//     .wready        (wready),
-//     .awready       (awready),
-//     .bvalid        (bvalid),
-//     .bresp         (bresp),
-
-//     .page_addr_0   (page_addr_0_out),
-//     .seed_init     (seed_init_out),
-
-//     .arvalid       (arvalid),
-//     .arid          (arid),
-//     .aruser        (aruser),
-//     .rready        (rready),
-
-//     .awvalid       (awvalid),
-//     .awid          (awid),
-//     .awuser        (awuser),
-
-//     .wvalid        (wvalid),
-//     .wdata         (wdata),
-//     .wlast         (wlast),
-//     .wstrb         (wstrb),
-
-//     .bready        (bready),
-
-//     .araddr        (araddr),
-//     .awaddr        (awaddr)
-// );
+assign cycles_mux = l2_use ? l2_cycles : cycles_cal;
+assign resp_mux  = l2_use ? {l2_result[62:0], l2_done[0]} : resp_cal;
 
 cal_delay cal_delay_inst(
   .clk           (axi4_mm_clk),
@@ -483,7 +517,7 @@ cal_delay cal_delay_inst(
   .arid          (arid),
   .awid          (awid),
 
-  .result        (delay_cal),
+  .result        (cycles_cal),
   .result_h      (resp_cal),
   .addr_cnt      (addr_cnt_out),
   .data_cnt      (data_cnt_out),

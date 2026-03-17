@@ -47,7 +47,7 @@ module cust_afu_csr_avmm_slave(
    output logic [63:0] page_addr_0_out,
    output logic [63:0] page_addr_1_out,
    output logic [63:0] test_case_out,
-   input logic [63:0] delay_out,
+   input logic [63:0] cycles_out,
    input logic [63:0] resp_out,
    input logic [63:0] addr_cnt_out,
    input logic [63:0] data_cnt_out,
@@ -68,7 +68,7 @@ module cust_afu_csr_avmm_slave(
 logic [63:0] func_type_reg;     //0
 logic [63:0] page_addr0_reg;    //8
 logic [63:0] page_addr1_reg;    //16
-logic [63:0] delay_reg;         //24 (latched on done)
+logic [63:0] cycles_reg;        //24 (latched on done)
 logic [63:0] test_case_reg;     //32
 logic [63:0] resp_reg;          //40 (latched on done)
 logic [63:0] addr_cnt_reg;      //48
@@ -88,7 +88,7 @@ logic config_access;
 // assign page_addr_0_out = page_addr0_reg;
 // assign test_case_out = test_case_reg;
 
-// assign delay_reg = delay_out;
+// assign cycles_reg = cycles_out;
 // assign resp_reg = resp_out;
 
  assign mask[7:0]   = byteenable[0]? 8'hFF:8'h0; 
@@ -110,7 +110,7 @@ logic config_access;
 localparam FUNC_TYPE_ADDR     = 22'h0000;
 localparam PAGE_ADDR_0_ADDR   = 22'h0008;
 localparam PAGE_ADDR_1_ADDR   = 22'h0010;
-localparam DELAY_ADDR         = 22'h0018;
+localparam CYCLES_ADDR        = 22'h0018;
 localparam TEST_CASE_ADDR     = 22'h0020;
 localparam RESP_ADDR          = 22'h0028;
 localparam ADDR_CNT_ADDR      = 22'h0030;
@@ -134,7 +134,7 @@ begin
          FUNC_TYPE_ADDR: readdata <= func_type_reg;
          PAGE_ADDR_0_ADDR: readdata <= page_addr0_reg;
          PAGE_ADDR_1_ADDR: readdata <= page_addr1_reg;
-         DELAY_ADDR: readdata <= delay_reg;
+         CYCLES_ADDR: readdata <= cycles_reg;
          TEST_CASE_ADDR: readdata <= test_case_reg;
          RESP_ADDR: readdata <= resp_reg;
          ADDR_CNT_ADDR: readdata <= addr_cnt_reg;
@@ -181,9 +181,8 @@ begin
             default: ;
          endcase
       end
-      else if (address == L2_DIST_START_ADDR && l2_dist_start_reg)
+      else if (address == L2_DIST_START_ADDR && l2_dist_start_reg) // SUS: do i need to clear reg?
       begin
-         // Self-clearing logic for the start bit
          l2_dist_start_reg <= 1'b0;
       end
    end
@@ -203,14 +202,14 @@ assign o_l2_dist_start = l2_dist_start_reg;
 logic resp_out_prev;
 always_ff @(posedge clk or negedge reset_n) begin
   if(!reset_n) begin
-    delay_reg <= 64'h0;
+    cycles_reg <= 64'h0;
     resp_reg  <= 64'h0;
     resp_out_prev <= 1'b0;
   end else begin
     resp_out_prev <= resp_out[0];
     // Capture on done rising edge
     if(resp_out[0] && !resp_out_prev) begin
-      delay_reg <= delay_out;
+      cycles_reg <= cycles_out;
       resp_reg  <= resp_out;
     end
   end

@@ -812,6 +812,7 @@ module ed_top_wrapper_typ2
     logic                 [3:0]                  afu_axi_arcache                      ;                                                    
     logic                 [1:0]                  afu_axi_arlock                       ;                                                    
     logic                                        cafu_user_enabled_cxl_io             ;  //Asserts 1 when user configured AFU to IO mode
+    assign cafu_user_enabled_cxl_io = 1'b1; // Fix 6: Force IO Enabled
     logic                 [2:0]                  ed_rx_bar                            ;  //AVST4to1 outputs                                                  
     logic                                        ed_rx_eop[1-1:0]                     ;                                                    
     logic                                        ed_rx_eop_i                          ;                                                    
@@ -1011,7 +1012,8 @@ assign  afu_axi_ar.arlock                        =  t_axi4_lock_encoding'(afu_ax
 
 assign  cafu2ip_quiesce_ack                      =  ip2cafu_quiesce_req_ff                       ; 
 
-assign  afu_cache_io_select                      =  cafu_user_enabled_cxl_io                     ;
+// Force Enable User CXL IO (Bypass cafu_csr0)
+assign  afu_cache_io_select                      =  1'b1                                         ; //cafu_user_enabled_cxl_io                     ;
 assign  afu_pio_select                           =  afu_cache_io_select                          ;
      
 assign  avst4to1_rx_data_avail[0]                =  1'b1                                         ;
@@ -1396,6 +1398,93 @@ always_ff@(posedge ip2hdm_clk) ip2hdm_reset_n_ff <= ip2hdm_reset_n_f ;
   // Example design Modules instatances                  
   //-------------------------------------------------------
 
+// Define wires for User AFU connection
+logic [11:0] uafu_awid;
+logic [63:0] uafu_awaddr;
+logic [9:0]  uafu_awlen;
+logic [2:0]  uafu_awsize;
+logic [1:0]  uafu_awburst;
+logic [2:0]  uafu_awprot;
+logic [3:0]  uafu_awqos;
+logic [5:0]  uafu_awuser;
+logic        uafu_awvalid;
+logic [3:0]  uafu_awcache;
+logic [1:0]  uafu_awlock;
+logic [3:0]  uafu_awregion;
+logic        uafu_awready;
+
+logic [511:0] uafu_wdata;
+logic [63:0]  uafu_wstrb;
+logic         uafu_wlast;
+logic         uafu_wuser;
+logic         uafu_wvalid;
+logic         uafu_wready;
+
+logic [11:0] uafu_bid;
+logic [1:0]  uafu_bresp;
+logic [3:0]  uafu_buser;
+logic        uafu_bvalid;
+logic        uafu_bready;
+
+logic [11:0] uafu_arid;
+logic [63:0] uafu_araddr;
+logic [9:0]  uafu_arlen;
+logic [2:0]  uafu_arsize;
+logic [1:0]  uafu_arburst;
+logic [2:0]  uafu_arprot;
+logic [3:0]  uafu_arqos;
+logic [5:0]  uafu_aruser;
+logic        uafu_arvalid;
+logic [3:0]  uafu_arcache;
+logic [1:0]  uafu_arlock;
+logic [3:0]  uafu_arregion;
+logic        uafu_arready;
+
+logic [11:0] uafu_rid;
+logic [511:0] uafu_rdata;
+logic [1:0]  uafu_rresp;
+logic        uafu_rlast;
+logic        uafu_ruser;
+logic        uafu_rvalid;
+logic        uafu_rready;
+
+// Tie off unused axi1 outputs (Host Interface)
+assign axi1_awid    = '0;
+assign axi1_awaddr  = '0;
+assign axi1_awlen   = '0;
+assign axi1_awsize  = '0;
+assign axi1_awburst = '0;
+assign axi1_awprot  = '0;
+assign axi1_awqos   = '0;
+assign axi1_awuser  = '0;
+assign axi1_awvalid = '0;
+assign axi1_awcache = '0;
+assign axi1_awlock  = '0;
+assign axi1_awregion= '0;
+assign axi1_awatop  = '0;
+
+assign axi1_wdata   = '0;
+assign axi1_wstrb   = '0;
+assign axi1_wlast   = '0;
+assign axi1_wuser   = '0;
+assign axi1_wvalid  = '0;
+
+assign axi1_bready  = '1; // Always ready to accept response (though none expected)
+
+assign axi1_arid    = '0;
+assign axi1_araddr  = '0;
+assign axi1_arlen   = '0;
+assign axi1_arsize  = '0;
+assign axi1_arburst = '0;
+assign axi1_arprot  = '0;
+assign axi1_arqos   = '0;
+assign axi1_aruser  = '0;
+assign axi1_arvalid = '0;
+assign axi1_arcache = '0;
+assign axi1_arlock  = '0;
+assign axi1_arregion= '0;
+
+assign axi1_rready  = '1; // Always ready
 
 
 cafu_csr0_avmm_wrapper
@@ -1414,7 +1503,8 @@ cafu_csr0_avmm_wrapper_inst
         .axi4_mm_rst_n                      (        ip2hdm_reset_n                     ),                                  
         .cxl_or_conv_rst_n                  (        cxl_or_conv_rst_n                  ),	
         // Misc
-        .cafu_user_enabled_cxl_io           (        cafu_user_enabled_cxl_io           ),                                  
+        // Fix 6: Disconnect from wrapper, force to 1 externally
+        .cafu_user_enabled_cxl_io           (                                           ),                                  
         .hdm_size_256mb                     (        hdm_size_256mb                     ),                                  
         .ddr_mc_status                      (        ddr_mc_status                      ),
         .mc_mem_active                      (        mc_mem_active                      ),
@@ -1480,16 +1570,18 @@ cafu_csr0_avmm_wrapper_inst
         .ip2usr_cxlreset_error              (ip2usr_cxlreset_error                      ),
         .ip2usr_cxlreset_complete           (ip2usr_cxlreset_complete                   ),                                  
         // Between AFU and CXL_IP CSR Access  AVMM  Bus                           
-        .csr_avmm_waitrequest               (        cafu2ip_avmm_waitrequest           ),                                  
-        .csr_avmm_readdata                  (        cafu2ip_avmm_readdata              ),                                  
-        .csr_avmm_readdatavalid             (        cafu2ip_avmm_readdatavalid         ),                                  
-        .csr_avmm_writedata                 (        ip2cafu_avmm_writedata             ),                                  
-        .csr_avmm_address                   (        ip2cafu_avmm_address               ),                                  
-        .csr_avmm_write                     (        ip2cafu_avmm_write                 ),                                  
-        .csr_avmm_read                      (        ip2cafu_avmm_read                  ),                                  
-        .csr_avmm_poison                    (        ip2cafu_avmm_poison                ),                                  
-        .csr_avmm_byteenable                (        ip2cafu_avmm_byteenable            )                                   
+        .csr_avmm_waitrequest               (                                           ),                                  
+        .csr_avmm_readdata                  (                                           ),                                  
+        .csr_avmm_readdatavalid             (                                           ),                                  
+        .csr_avmm_writedata                 (        ip2csr_avmm_writedata             ),                                  
+        .csr_avmm_address                   (        ip2csr_avmm_address               ),                                  
+        .csr_avmm_write                     (        ip2csr_avmm_write                 ),                                  
+        .csr_avmm_read                      (        ip2csr_avmm_read                  ),                                  
+        .csr_avmm_poison                    (        ip2csr_avmm_poison                ),                                  
+        .csr_avmm_byteenable                (        ip2csr_avmm_byteenable            )                                   
 );
+
+
 
 
 cust_afu_wrapper cust_afu_wrapper_inst
@@ -1499,12 +1591,67 @@ cust_afu_wrapper cust_afu_wrapper_inst
  // Resets
   .axi4_mm_rst_n                         (ip2hdm_reset_n),
 
+  // Internal wires for User AFU to Local Memory connection
+  // These replace the direct connection to axi1 (Host)
+  // Logic type to match port widths
+  .awid                                  (uafu_awid),
+  .awaddr                                (uafu_awaddr), 
+  .awlen                                 (uafu_awlen),
+  .awsize                                (uafu_awsize),
+  .awburst                               (uafu_awburst),
+  .awprot                                (uafu_awprot),
+  .awqos                                 (uafu_awqos),
+  .awuser                                (uafu_awuser),
+  .awvalid                               (uafu_awvalid),
+  .awcache                               (uafu_awcache),
+  .awlock                                (uafu_awlock),
+  .awregion                              (uafu_awregion),
+  .awatop                                (), // Not used in afu_top
+  .awready                               (uafu_awready),
+  
+  .wdata                                 (uafu_wdata),
+  .wstrb                                 (uafu_wstrb),
+  .wlast                                 (uafu_wlast),
+  .wuser                                 (uafu_wuser),
+  .wvalid                                (uafu_wvalid),
+  .wready                                (uafu_wready),
+  
+   .bid                                  (uafu_bid),
+   .bresp                                (uafu_bresp),
+   .buser                                (uafu_buser),
+   .bvalid                               (uafu_bvalid),
+   .bready                               (uafu_bready),
+  
+  .arid                                  (uafu_arid),
+  .araddr                                (uafu_araddr),
+  .arlen                                 (uafu_arlen),
+  .arsize                                (uafu_arsize),
+  .arburst                               (uafu_arburst),
+  .arprot                                (uafu_arprot),
+  .arqos                                 (uafu_arqos),
+  .aruser                                (uafu_aruser),
+  .arvalid                               (uafu_arvalid),
+  .arcache                               (uafu_arcache),
+  .arlock                                (uafu_arlock),
+  .arregion                              (uafu_arregion),
+  .arready                               (uafu_arready),
+
+  .rid                                   (uafu_rid),
+  .rdata                                 (uafu_rdata),
+  .rresp                                 (uafu_rresp),
+  .rlast                                 (uafu_rlast),
+  .ruser                                 (uafu_ruser),
+  .rvalid                                (uafu_rvalid),
+  .rready                                (uafu_rready),
+
   //-------------------------------------------------------
   // PF1 BAR2 example CSR                                --
   //-------------------------------------------------------
-  // AVMM interface - imported from ex_default_csr
+  // AVMM interface - Re-mapped to ip2cafu/cafu2ip signals to fix disconnection
+  // AVMM interface - Re-mapped to ip2csr (BAR 0) as per Reference Design
   .csr_avmm_clk                        ( ip2csr_avmm_clk                   ),
-  .csr_avmm_rstn                       ( ip2csr_avmm_rstn                  ),
+  // Force Reset to Main System Reset (ip2hdm_reset_n) to bypass potential ip2csr_avmm_rstn issues
+  .csr_avmm_rstn                       ( ip2hdm_reset_n                    ),
   .csr_avmm_waitrequest                ( csr2ip_avmm_waitrequest           ),
   .csr_avmm_readdata                   ( csr2ip_avmm_readdata              ),
   .csr_avmm_readdatavalid              ( csr2ip_avmm_readdatavalid         ),
@@ -1513,65 +1660,15 @@ cust_afu_wrapper cust_afu_wrapper_inst
   .csr_avmm_address                    ( ip2csr_avmm_address               ),
   .csr_avmm_write                      ( ip2csr_avmm_write                 ),
   .csr_avmm_read                       ( ip2csr_avmm_read                  ),
-  .csr_avmm_byteenable                 ( ip2csr_avmm_byteenable            ),
+  .csr_avmm_byteenable                 ( ip2csr_avmm_byteenable            )
 
-// AXI-MM interface - write address channel
-  .awid                                  (axi1_awid),
-  .awaddr                                (axi1_awaddr), 
-  .awlen                                 (axi1_awlen),
-  .awsize                                (axi1_awsize),
-  .awburst                               (axi1_awburst),
-  .awprot                                (axi1_awprot),
-  .awqos                                 (axi1_awqos),
-  .awuser                                (axi1_awuser),
-  .awvalid                               (axi1_awvalid),
-  .awcache                               (axi1_awcache),
-  .awlock                                (axi1_awlock),
-  .awregion                              (axi1_awregion),
-  .awatop                                (axi1_awatop),
-  .awready                               (axi1_awready),
-  
-// AXI-MM interface - write data channel
-  .wdata                                 (axi1_wdata),
-  .wstrb                                 (axi1_wstrb),
-  .wlast                                 (axi1_wlast),
-  .wuser                                 (axi1_wuser),
-  .wvalid                                (axi1_wvalid),
-  .wready                                (axi1_wready),
-  
-//  AXI-MM interface - write response channel
-   .bid                                  (axi1_bid),
-   .bresp                                (axi1_bresp),
-   .buser                                (axi1_buser),
-   .bvalid                               (axi1_bvalid),
-   .bready                               (axi1_bready),
-  
-// AXI-MM interface - read address channel
-  .arid                                  (axi1_arid),
-  .araddr                                (axi1_araddr),
-  .arlen                                 (axi1_arlen),
-  .arsize                                (axi1_arsize),
-  .arburst                               (axi1_arburst),
-  .arprot                                (axi1_arprot),
-  .arqos                                 (axi1_arqos),
-  .aruser                                (axi1_aruser),
-  .arvalid                               (axi1_arvalid),
-  .arcache                               (axi1_arcache),
-  .arlock                                (axi1_arlock),
-  .arregion                              (axi1_arregion),
-  .arready                               (axi1_arready),
 
-// AXI-MM interface - read response channel
-  .rid                                   (axi1_rid),
-  .rdata                                 (axi1_rdata),
-  .rresp                                 (axi1_rresp),
-  .rlast                                 (axi1_rlast),
-  .ruser                                 (axi1_ruser),
-  .rvalid                                (axi1_rvalid),
-  .rready                                (axi1_rready)
+  
+
   
   
 );
+
 
 
   //-------------------------------------------------------
@@ -2094,7 +2191,57 @@ intel_cxl_tx_tlp_fifos  inst_tlp_fifos  (
        .cxlip2iafu_to_mc_axi4            ( cxlip2iafu_to_mc_axi4    ), //( cxlip2iafu_to_mc_axi4[(2*chanCount+ONE_OR_ZERO):(2*chanCount)]    ), //cxlip2iafu_to_mc_axi4 
        .iafu2mc_to_mc_axi4               ( iafu2mc_to_mc_axi4       ), //( cxlip2iafu_to_mc_axi4[(2*chanCount+ONE_OR_ZERO):(2*chanCount)]    ), //cxlip2iafu_to_mc_axi4 
        .mc2iafu_from_mc_axi4             ( mc2iafu_from_mc_axi4     ), //( iafu2cxlip_from_mc_axi4[(2*chanCount+ONE_OR_ZERO):(2*chanCount)]  ), //iafu2cxlip_from_mc_axi4
-       .iafu2cxlip_from_mc_axi4          ( iafu2cxlip_from_mc_axi4  )  //( iafu2cxlip_from_mc_axi4[(2*chanCount+ONE_OR_ZERO):(2*chanCount)]  ), //iafu2cxlip_from_mc_axi4
+       .iafu2cxlip_from_mc_axi4          ( iafu2cxlip_from_mc_axi4  ),  //( iafu2cxlip_from_mc_axi4[(2*chanCount+ONE_OR_ZERO):(2*chanCount)]  ), //iafu2cxlip_from_mc_axi4
+
+       // Connect User AFU ports
+       .uafu_awid(uafu_awid),
+       .uafu_awaddr(uafu_awaddr),
+       .uafu_awlen(uafu_awlen),
+       .uafu_awsize(uafu_awsize),
+       .uafu_awburst(uafu_awburst),
+       .uafu_awprot(uafu_awprot),
+       .uafu_awqos(uafu_awqos),
+       .uafu_awuser(uafu_awuser),
+       .uafu_awvalid(uafu_awvalid),
+       .uafu_awcache(uafu_awcache),
+       .uafu_awlock(uafu_awlock),
+       .uafu_awregion(uafu_awregion),
+       .uafu_awready(uafu_awready),
+
+       .uafu_wdata(uafu_wdata),
+       .uafu_wstrb(uafu_wstrb),
+       .uafu_wlast(uafu_wlast),
+       .uafu_wuser(uafu_wuser),
+       .uafu_wvalid(uafu_wvalid),
+       .uafu_wready(uafu_wready),
+
+       .uafu_bid(uafu_bid),
+       .uafu_bresp(uafu_bresp),
+       .uafu_buser(uafu_buser),
+       .uafu_bvalid(uafu_bvalid),
+       .uafu_bready(uafu_bready),
+
+       .uafu_arid(uafu_arid),
+       .uafu_araddr(uafu_araddr),
+       .uafu_arlen(uafu_arlen),
+       .uafu_arsize(uafu_arsize),
+       .uafu_arburst(uafu_arburst),
+       .uafu_arprot(uafu_arprot),
+       .uafu_arqos(uafu_arqos),
+       .uafu_aruser(uafu_aruser),
+       .uafu_arvalid(uafu_arvalid),
+       .uafu_arcache(uafu_arcache),
+       .uafu_arlock(uafu_arlock),
+       .uafu_arregion(uafu_arregion),
+       .uafu_arready(uafu_arready),
+
+       .uafu_rid(uafu_rid),
+       .uafu_rdata(uafu_rdata),
+       .uafu_rresp(uafu_rresp),
+       .uafu_rlast(uafu_rlast),
+       .uafu_ruser(uafu_ruser),
+       .uafu_rvalid(uafu_rvalid),
+       .uafu_rready(uafu_rready)
 //`else
  );
 
